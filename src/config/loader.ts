@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, join } from "node:path";
+import { homedir } from "node:os";
 import { parse as parseYaml, parseDocument, stringify as stringifyYaml } from "yaml";
 import { configSchema } from "./schema.js";
 import type { GatewayConfig, ResolvedBotConfig, BotConfig } from "./types.js";
@@ -31,7 +32,7 @@ export function parseConfig(yamlStr: string): GatewayConfig {
 
 export function loadConfig(configPath?: string): GatewayConfig {
   const resolvedPath = configPath
-    ?? resolve(process.env.HOME ?? "~", ".pocketagent", "config.yaml");
+    ?? resolve(process.env.POCKETAGENT_HOME ?? join(homedir(), ".pocketagent"), "config.yaml");
 
   if (!existsSync(resolvedPath)) {
     mkdirSync(dirname(resolvedPath), { recursive: true });
@@ -45,7 +46,7 @@ export function loadConfig(configPath?: string): GatewayConfig {
 }
 
 export function resolveDataDir(config: GatewayConfig): string {
-  const dir = config.gateway.dataDir.replace(/^~/, process.env.HOME ?? "");
+  const dir = config.gateway.dataDir.replace(/^~/, homedir());
   return resolve(dir);
 }
 
@@ -121,9 +122,9 @@ export function resolveBots(config: GatewayConfig): ResolvedBotConfig[] {
 
     const rawGroups = (bot.groups ?? bot.auth?.groups ?? {}) as Record<
       string,
-      boolean | { enabled?: boolean; allowFrom?: string[] } | undefined
+      boolean | { enabled?: boolean; allowFrom?: string[]; triggerWords?: string[] } | undefined
     >;
-    const groups: Record<string, { enabled: boolean; allowFrom?: string[] }> = {};
+    const groups: Record<string, { enabled: boolean; allowFrom?: string[]; triggerWords?: string[] }> = {};
     for (const [gid, gval] of Object.entries(rawGroups)) {
       if (typeof gval === "boolean") {
         groups[gid] = { enabled: gval };
@@ -131,17 +132,18 @@ export function resolveBots(config: GatewayConfig): ResolvedBotConfig[] {
         groups[gid] = {
           enabled: gval.enabled ?? true,
           allowFrom: gval.allowFrom,
+          triggerWords: gval.triggerWords,
         };
       }
     }
 
     const rawGuilds = (bot.guilds ?? bot.auth?.guilds ?? {}) as Record<
       string,
-      boolean | { enabled?: boolean; allowedChannels?: string[]; allowFrom?: string[] } | undefined
+      boolean | { enabled?: boolean; allowedChannels?: string[]; allowFrom?: string[]; triggerWords?: string[] } | undefined
     >;
     const guilds: Record<
       string,
-      { enabled: boolean; allowedChannels?: string[]; allowFrom?: string[] }
+      { enabled: boolean; allowedChannels?: string[]; allowFrom?: string[]; triggerWords?: string[] }
     > = {};
     for (const [gid, gval] of Object.entries(rawGuilds)) {
       if (typeof gval === "boolean") {
@@ -151,6 +153,7 @@ export function resolveBots(config: GatewayConfig): ResolvedBotConfig[] {
           enabled: gval.enabled ?? true,
           allowedChannels: gval.allowedChannels,
           allowFrom: gval.allowFrom,
+          triggerWords: gval.triggerWords,
         };
       }
     }
@@ -172,6 +175,7 @@ export function resolveBots(config: GatewayConfig): ResolvedBotConfig[] {
       groupPolicy,
       guildPolicy,
       allowFrom,
+      triggerWords: bot.triggerWords,
       groups,
       guilds,
       soul: bot.soul,

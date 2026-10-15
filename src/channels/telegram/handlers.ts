@@ -48,6 +48,7 @@ export function registerHandlers(
   commandHandlers: Map<string, CommandHandler>,
   log: Logger,
   adapterCallbackHandlers?: Map<string, (ctx: Context) => Promise<void>>,
+  getTriggerWords?: (chatId: string) => string[],
 ): void {
   for (const [cmd, handler] of commandHandlers) {
     bot.command(cmd, (ctx) => {
@@ -77,7 +78,8 @@ export function registerHandlers(
         timestamp: msg.timestamp,
       });
 
-      const result = checkGroupMention(ctx, msg, ctx.message.text);
+      const triggers = getTriggerWords?.(msg.chatId);
+      const result = checkGroupMention(ctx, msg, ctx.message.text, triggers);
       if (!result) return;
       msg.text = result;
     }
@@ -106,7 +108,8 @@ export function registerHandlers(
         media: [`photo:${largest.file_id}`],
       });
 
-      const result = checkGroupMention(ctx, msg, caption);
+      const triggers = getTriggerWords?.(msg.chatId);
+      const result = checkGroupMention(ctx, msg, caption, triggers);
       if (result === null) return;
       msg.text = result;
     } else {
@@ -192,7 +195,8 @@ export function registerHandlers(
         media: doc ? [`document:${doc.file_id}:${fileName ?? ""}`] : undefined,
       });
 
-      const result = checkGroupMention(ctx, msg, caption);
+      const triggers = getTriggerWords?.(msg.chatId);
+      const result = checkGroupMention(ctx, msg, caption, triggers);
       const mediaGroupId = ctx.message.media_group_id;
       if (result === null && !mediaGroupId) return;
       msg.text = result ?? "";
@@ -237,7 +241,8 @@ export function registerHandlers(
         media: [`voice:${voice.file_id}`],
       });
 
-      const result = checkGroupMention(ctx, msg, caption);
+      const triggers = getTriggerWords?.(msg.chatId);
+      const result = checkGroupMention(ctx, msg, caption, triggers);
       if (result === null) return;
       msg.text = result;
     } else {
@@ -277,7 +282,8 @@ export function registerHandlers(
         media: [`audio:${audio.file_id}:${fileName}`],
       });
 
-      const result = checkGroupMention(ctx, msg, caption);
+      const triggers = getTriggerWords?.(msg.chatId);
+      const result = checkGroupMention(ctx, msg, caption, triggers);
       const mediaGroupId = ctx.message.media_group_id;
       if (result === null && !mediaGroupId) return;
       msg.text = result ?? "";
@@ -304,12 +310,21 @@ export function registerHandlers(
   });
 }
 
-function checkGroupMention(ctx: Context, _msg: InboundMessage, text: string): string | null {
-  const botUsername = ctx.me.username;
-  const isReplyToBot = ctx.message?.reply_to_message?.from?.id === ctx.me.id;
+export function checkGroupMention(
+  ctx: Context,
+  _msg: InboundMessage,
+  text: string,
+  triggerWords?: string[],
+): string | null {
+  const botUsername = ctx.me?.username;
+  const isReplyToBot = ctx.message?.reply_to_message?.from?.id === ctx.me?.id;
   const isMentioned = botUsername && text.includes(`@${botUsername}`);
+  const matchedTrigger = triggerWords?.some((word) => {
+    const trimmed = word.trim();
+    return trimmed.length > 0 && text.toLowerCase().includes(trimmed.toLowerCase());
+  });
 
-  if (!isMentioned && !isReplyToBot) return null;
+  if (!isMentioned && !isReplyToBot && !matchedTrigger) return null;
 
   if (isMentioned && botUsername) {
     return text.replace(new RegExp(`@${botUsername}`, "gi"), "").trim();
