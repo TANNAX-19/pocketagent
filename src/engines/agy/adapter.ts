@@ -15,7 +15,7 @@ import type {
   EngineProcess,
   EngineRuntimeConfig,
 } from "../types.js";
-import { discoverAgyCapabilities } from "./discovery.js";
+import { discoverAgyCapabilities, getAgyPinnedEffort } from "./discovery.js";
 import { agyHooks, steerHookUrl, STEER_URL_ENV } from "../../steer/steer.js";
 
 // Context size (tokens) past which the next turn starts a new Antigravity conversation. Antigravity compacts its
@@ -136,7 +136,13 @@ export class AgyEngineAdapter implements EngineAdapter {
     }
 
     const rawEffort = session.engineEfforts?.agy ?? session.effort;
-    const activeEffort = rawEffort ?? this.config.effort;
+    // A persisted effort from another model must not contradict the model slug.
+    const pinnedEffort = getAgyPinnedEffort(activeModel);
+    const activeEffort = pinnedEffort ?? rawEffort ?? this.config.effort;
+    if (pinnedEffort && session.activeEngine === "agy") {
+      session.effort = pinnedEffort;
+      (session.engineEfforts ??= {}).agy = pinnedEffort;
+    }
     if (activeEffort && ["low", "medium", "high"].includes(activeEffort.toLowerCase())) {
       args.push("--effort", activeEffort.toLowerCase());
     }
@@ -148,6 +154,7 @@ export class AgyEngineAdapter implements EngineAdapter {
 
     this.log.info({ sessionId: session.sessionId, args }, "Spawning Agy process");
     const proc = spawn(this.config.binary, args, {
+      windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
       cwd: sessionDir,
       env: { ...process.env, POCKETAGENT_SESSION_ID: session.sessionId, [STEER_URL_ENV]: steerHookUrl(this.config.apiPort) },
@@ -222,6 +229,10 @@ export class AgyEngineAdapter implements EngineAdapter {
     let textStepKey: unknown;
     // Tokens the latest model call was given, i.e. how large the conversation has grown
     let contextTokens = 0;
+    // API-attempt errors can be followed by an internal retry and a successful final response.
+    let pendingRetryError: string | undefined;
+    let responseAfterRetryError = false;
+    const isRetryError = (message: string) => /^API error \(attempt \d+\):/i.test(message);
 
     try {
       for await (const line of rl) {
@@ -242,6 +253,11 @@ export class AgyEngineAdapter implements EngineAdapter {
           const msg = typeof event.message === "string"
             ? event.message
             : (typeof event.error === "string" ? event.error : "Agy engine error");
+          if (isRetryError(msg)) {
+            pendingRetryError = msg;
+            responseAfterRetryError = false;
+            continue;
+          }
           yield { type: "error", message: msg };
           return;
         }
@@ -266,6 +282,7 @@ export class AgyEngineAdapter implements EngineAdapter {
               contextTokens = usage.input_tokens + (typeof usage.cache_read_tokens === "number" ? usage.cache_read_tokens : 0);
             }
             if (typeof step.text_delta === "string" && step.text_delta) {
+              if (pendingRetryError) responseAfterRetryError = true;
               // Deltas of one response step form one block; a different step starts a new one
               const stepKey = step.step_index ?? step.stepIndex ?? step.step_id ?? step.id;
               const newStep = stepKey !== undefined && textStepKey !== undefined && stepKey !== textStepKey;
@@ -276,6 +293,7 @@ export class AgyEngineAdapter implements EngineAdapter {
               yield { type: "thinking_started" };
             }
           } else if (step.step_type === "tool" && step.state === "ACTIVE") {
+            if (pendingRetryError) responseAfterRetryError = true;
             blocks.close();
             const toolName = typeof step.tool_name === "string" ? step.tool_name : "tool";
             const toolInfo = (step.tool_info as Record<string, unknown>) ?? {};
@@ -292,15 +310,28 @@ export class AgyEngineAdapter implements EngineAdapter {
           const resObj = (event.result ?? {}) as Record<string, unknown>;
           const responseText = typeof resObj.response === "string" ? resObj.response : undefined;
           const errorText = typeof resObj.error === "string" && resObj.error.trim() ? resObj.error.trim() : undefined;
+          const hasResponse = Boolean(responseText?.trim());
+          const canceled = String(resObj.status) === "CANCELED";
+          const interrupted = ["INTERRUPTED", "INVALID"].includes(String(resObj.status));
+          const retryRecovered = Boolean(pendingRetryError ? responseAfterRetryError : !errorText || isRetryError(errorText));
+          const recovered = hasResponse && !canceled && (
+            resObj.status === "SUCCESS" ||
+            retryRecovered
+          );
+          const finalError = errorText && !(recovered && isRetryError(errorText))
+            ? errorText
+            : (!recovered && pendingRetryError ? pendingRetryError : (canceled ? "Turn was canceled" : undefined));
 
-          if (errorText) {
-            yield { type: "error", message: errorText };
+          if (finalError) yield { type: "error", message: finalError };
+          else if (pendingRetryError && responseAfterRetryError) {
+            this.log.info({ sessionId: session.sessionId }, "Agy API retry recovered; delivering final response");
           }
 
           // Agy may mark status="ERROR" if any intermediate tool or API retry had an issue during the turn,
           // even if it successfully recovered and generated the full response.
-          // Only treat as error if there is an explicit error message or if no response was produced.
-          const isError = Boolean(errorText) || (resObj.status === "ERROR" && !responseText);
+          // A retained API-attempt error must not hide an answer produced after recovery.
+          // Canceled turns and empty responses remain failures; an interrupted turn that produced a response is delivered.
+          const isError = Boolean(finalError) || canceled || (interrupted && !hasResponse) || (resObj.status === "ERROR" && !hasResponse);
 
           yield {
             type: "result",
@@ -309,6 +340,11 @@ export class AgyEngineAdapter implements EngineAdapter {
           };
           return;
         }
+      }
+      // Do not silently accept a retry whose process ended before it emitted a terminal result.
+      if (pendingRetryError) {
+        yield { type: "error", message: pendingRetryError };
+        yield { type: "result", isError: true };
       }
     } finally {
       rl.close();

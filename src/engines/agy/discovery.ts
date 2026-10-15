@@ -14,6 +14,11 @@ const DEFAULT_AGY_EFFORTS: EffortInfo[] = [
   { id: "high", label: "High" },
 ];
 
+/** These CLI model slugs already encode a fixed effort level. */
+export function getAgyPinnedEffort(model?: string): string | undefined {
+  return model?.match(/-(low|medium|high)$/i)?.[1].toLowerCase();
+}
+
 export async function discoverAgyCapabilities(
   binary: string = "agy",
   customModels: ModelInfo[] = [],
@@ -27,7 +32,7 @@ export async function discoverAgyCapabilities(
   const models: ModelInfo[] = [];
 
   try {
-    const { stdout } = await execFileAsync(binary, ["models"], { timeout: 8000 });
+    const { stdout } = await execFileAsync(binary, ["models"], { timeout: 8000, windowsHide: true });
     const lines = stdout.split("\n");
     for (const rawLine of lines) {
       const line = rawLine.trim();
@@ -79,7 +84,14 @@ export async function discoverAgyCapabilities(
   }
 
   cachedCapabilities = {
-    models,
+    models: models.map((model) => {
+      const effort = getAgyPinnedEffort(model.id);
+      return effort ? {
+        ...model,
+        defaultEffort: effort,
+        supportedEfforts: DEFAULT_AGY_EFFORTS.filter((item) => item.id === effort),
+      } : model;
+    }),
     efforts: DEFAULT_AGY_EFFORTS,
     supportsEffort: true,
     supportsCustomModel: true,
