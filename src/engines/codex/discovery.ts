@@ -1,11 +1,9 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { execCli as execFileAsync } from "../../runtime/process.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { EngineCapabilities, ModelInfo, EffortInfo } from "../types.js";
 
-const execFileAsync = promisify(execFile);
 
 let cachedCapabilities: EngineCapabilities | null = null;
 let lastFetchedAt = 0;
@@ -54,7 +52,7 @@ export async function discoverCodexCapabilities(
 
   // 1. Try running `codex debug models`
   try {
-    const { stdout } = await execFileAsync(binary, ["debug", "models"], { timeout: 6000, windowsHide: true });
+    const { stdout } = await execFileAsync(binary, ["debug", "models"], { timeout: 6000 });
     const data = JSON.parse(stdout);
     if (Array.isArray(data.models)) {
       rawModels = data.models;

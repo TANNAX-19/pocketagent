@@ -2,6 +2,7 @@
 
 import dns from "node:dns";
 import net from "node:net";
+import { randomUUID } from "node:crypto";
 dns.setDefaultResultOrder("ipv4first");
 net.setDefaultAutoSelectFamily(false);
 
@@ -25,6 +26,8 @@ import {
 import { resolve, join } from "node:path";
 import { homedir } from "node:os";
 import { configureNetworkProxy } from "./network/proxy.js";
+import { spawnCliSync } from "./runtime/process.js";
+import { requestWindowsStop, startWindowsControl, windowsEnvironmentHandoff, WINDOWS_ENV_BOOTSTRAP } from "./runtime/control.js";
 
 const program = new Command();
 
@@ -89,7 +92,7 @@ function checkEngineClis(config: GatewayConfig): void {
   ];
 
   for (const eng of engines) {
-    const res = spawnSync(eng.binary, [eng.flag], { stdio: "pipe", timeout: 3000, windowsHide: true });
+    const res = spawnCliSync(eng.binary, [eng.flag], { stdio: "pipe", timeout: 3000 });
     if (res.status === 0) {
       console.log(`  ✓ ${eng.name} found (${eng.binary})`);
     } else {
@@ -113,7 +116,8 @@ async function startForeground(opts: { config?: string }): Promise<void> {
 
   mkdirSync(dataDir, { recursive: true });
   const lockPath = join(dataDir, "gateway.lock");
-  writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: Date.now() }));
+  const controlToken = randomUUID();
+  writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: Date.now(), controlToken }));
 
   const log = pino({
     level: config.gateway.logLevel,
@@ -125,12 +129,21 @@ async function startForeground(opts: { config?: string }): Promise<void> {
 
   const gateway = new Gateway(config, log, opts.config);
 
+  let stopping = false;
+  let control: net.Server | undefined;
   const cleanup = async () => {
+    if (stopping) return;
+    stopping = true;
     console.log("\nShutting down PocketAgent Gateway...");
-    try { unlinkSync(lockPath); } catch {}
+    control?.close();
     await gateway.stop();
+    try { unlinkSync(lockPath); } catch {}
     process.exit(0);
   };
+
+  if (process.platform === "win32") {
+    control = await startWindowsControl(dataDir, controlToken, () => { void cleanup(); });
+  }
 
   process.on("SIGINT", cleanup);
   process.on("SIGTERM", cleanup);
@@ -181,8 +194,10 @@ async function startDaemon(opts: { config?: string; windowsChild?: boolean }): P
   if (process.platform === "win32" && !opts.windowsChild) {
     const quoteWindowsArg = (value: string) => `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/g, '$1$1')}"`;
     const psLiteral = (value: string) => `'${value.replace(/'/g, "''")}'`;
-    const commandLine = [process.argv[0], process.argv[1], "start", "--windows-child",
-      ...(opts.config ? ["-c", resolve(opts.config)] : [])].map(quoteWindowsArg).join(" ");
+    const handoff = await windowsEnvironmentHandoff();
+    const configPath = resolve(opts.config ?? join(process.env.POCKETAGENT_HOME ?? join(homedir(), ".pocketagent"), "config.yaml"));
+    const commandLine = [process.execPath, "-e", WINDOWS_ENV_BOOTSTRAP, handoff.pipe,
+      resolve(process.argv[1]), "start", "--windows-child", "-c", configPath].map(quoteWindowsArg).join(" ");
     const psCommand = [
       "$ErrorActionPreference = 'Stop'",
       "$paStartup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{CreateFlags=[uint32]16777224;ShowWindow=[uint16]0}",
@@ -196,6 +211,7 @@ async function startDaemon(opts: { config?: string; windowsChild?: boolean }): P
     let result: { ReturnValue?: number } = {};
     try { result = JSON.parse(launched.stdout?.trim() ?? "{}"); } catch {}
     if (launched.status !== 0 || result.ReturnValue !== 0) {
+      handoff.close();
       console.error(`Independent Windows startup failed (WMI result: ${result.ReturnValue ?? "unavailable"}).`);
       process.exit(1);
     }
@@ -208,6 +224,7 @@ async function startDaemon(opts: { config?: string; windowsChild?: boolean }): P
           const response = await fetch(`http://127.0.0.1:${config.gateway.port}/api/status`, { signal: AbortSignal.timeout(1000) });
           const status = await response.json() as { gateway?: { pid?: number }; bots?: Array<{ status?: string }> };
           if (status.gateway?.pid === gatewayPid && status.bots?.every((bot) => bot.status === "online")) {
+            handoff.close();
             console.log(`PocketAgent daemon started independently in background (PID: ${gatewayPid})`);
             console.log(`Dashboard: http://127.0.0.1:${config.gateway.port}`);
             console.log(`Logs: ${join(getLogDir(dataDir), "gateway.log")}`);
@@ -218,6 +235,7 @@ async function startDaemon(opts: { config?: string; windowsChild?: boolean }): P
       await new Promise((done) => setTimeout(done, 300));
     }
     console.error(`Windows process was created but gateway readiness was not confirmed. Check ${join(dataDir, "logs")}.`);
+    handoff.close();
     process.exit(1);
   }
 
@@ -296,7 +314,16 @@ async function stopDaemon(dataDir: string): Promise<boolean> {
     return false;
   }
   console.log(`Stopping PocketAgent (PID: ${runningPid})...`);
-  try { process.kill(runningPid, "SIGTERM"); } catch {}
+  let graceful = false;
+  if (process.platform === "win32") {
+    try {
+      const lock = JSON.parse(readFileSync(join(dataDir, "gateway.lock"), "utf8"));
+      if (typeof lock.controlToken === "string") graceful = await requestWindowsStop(dataDir, runningPid, lock.controlToken);
+    } catch {}
+  }
+  if (!graceful) {
+    try { process.kill(runningPid, "SIGTERM"); } catch {}
+  }
   const start = Date.now();
   while (isPidRunning(runningPid) && Date.now() - start < 5000) {
     await new Promise((r) => setTimeout(r, 200));
@@ -605,8 +632,10 @@ program
     }
 
     try {
-      const openCmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
-      spawn(openCmd, [url], { detached: true, stdio: "ignore" }).unref();
+      const openCmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "rundll32.exe" : "xdg-open";
+      const child = spawn(openCmd, process.platform === "win32" ? ["url.dll,FileProtocolHandler", url] : [url], { detached: true, windowsHide: true, stdio: "ignore" });
+      child.on("error", () => console.log(`  Open ${url} in your browser.`));
+      child.unref();
       console.log(`  Opened in default browser.`);
     } catch {
       console.log(`  Open ${url} in your browser.`);

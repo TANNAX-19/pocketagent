@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawnCli as spawn, stopCli } from "../../runtime/process.js";
+import type { ChildProcess } from "node:child_process";
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -225,7 +226,7 @@ export class CodexEngineAdapter implements EngineAdapter {
     if (!ep) return;
     this.clearIdleTimer(sessionId);
     if (ep.process && !ep.process.killed) {
-      ep.process.kill("SIGTERM");
+      stopCli(ep.process, "SIGTERM");
     }
     this.processes.delete(sessionId);
   }
@@ -234,7 +235,7 @@ export class CodexEngineAdapter implements EngineAdapter {
     for (const [id, ep] of this.processes) {
       this.clearIdleTimer(id);
       if (ep.process && !ep.process.killed) {
-        ep.process.kill("SIGTERM");
+        stopCli(ep.process, "SIGTERM");
       }
     }
     this.processes.clear();

@@ -12,6 +12,15 @@ afterEach(() => {
 });
 
 describe('Windows deployment configuration', () => {
+  it('preserves Windows paths in environment values without treating backslashes as YAML escapes', () => {
+    vi.stubEnv('PA_TEST_DATA', 'D:\\中文 dir\\pocketagent');
+    vi.stubEnv('PA_TEST_PORT', '19991');
+    vi.stubEnv('PA_TEST_TOKEN', '123:quote" # literal\\value');
+    const config = parseConfig('gateway:\n  port: ${PA_TEST_PORT}\n  dataDir: "${PA_TEST_DATA}"\nbots:\n  - name: test\n    token: "${PA_TEST_TOKEN}"');
+    expect(config.gateway.port).toBe(19991);
+    expect(config.gateway.dataDir).toBe('D:\\中文 dir\\pocketagent');
+    expect(config.bots![0].token).toBe('123:quote" # literal\\value');
+  });
   it('expands the data path even when Windows has no HOME variable', () => {
     vi.stubEnv('HOME', undefined);
     const config = parseConfig('gateway:\n  dataDir: ~/.pocketagent\nbots: []');

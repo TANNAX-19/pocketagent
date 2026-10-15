@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawnCli as spawn, stopCli } from "../../runtime/process.js";
+import type { ChildProcess } from "node:child_process";
 import { mkdirSync, existsSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -408,7 +409,7 @@ export class AgyEngineAdapter implements EngineAdapter {
     if (!ep) return;
     this.clearIdleTimer(sessionId);
     if (ep.process && !ep.process.killed) {
-      ep.process.kill("SIGTERM");
+      stopCli(ep.process, "SIGTERM");
     }
     this.processes.delete(sessionId);
   }
@@ -417,7 +418,7 @@ export class AgyEngineAdapter implements EngineAdapter {
     for (const [id, ep] of this.processes) {
       this.clearIdleTimer(id);
       if (ep.process && !ep.process.killed) {
-        ep.process.kill("SIGTERM");
+        stopCli(ep.process, "SIGTERM");
       }
     }
     this.processes.clear();
@@ -430,7 +431,7 @@ export class AgyEngineAdapter implements EngineAdapter {
     ep.idleTimer = setTimeout(() => {
       this.log.info({ sessionId }, "Agy process idle timeout, terminating");
       if (ep.process && !ep.process.killed) {
-        ep.process.kill("SIGTERM");
+        stopCli(ep.process, "SIGTERM");
       }
       this.processes.delete(sessionId);
     }, this.config.idleTimeoutMs);
@@ -463,7 +464,7 @@ export class AgyEngineAdapter implements EngineAdapter {
     if (oldestId) {
       const ep = this.processes.get(oldestId);
       if (ep?.process && !ep.process.killed) {
-        ep.process.kill("SIGTERM");
+        stopCli(ep.process, "SIGTERM");
       }
       this.processes.delete(oldestId);
     }

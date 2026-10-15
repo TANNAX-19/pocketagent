@@ -5,14 +5,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
-import { spawn } from "node:child_process";
+import { spawnCli as spawn } from "../runtime/process.js";
 import { AgyEngineAdapter } from "../engines/agy/adapter.js";
 import { discoverAgyCapabilities } from "../engines/agy/discovery.js";
 import type { Session } from "../sessions/types.js";
 
-vi.mock("node:child_process", async (original) => ({
-  ...await original<typeof import("node:child_process")>(),
-  spawn: vi.fn(),
+vi.mock("../runtime/process.js", async (original) => ({
+  ...await original<typeof import("../runtime/process.js")>(),
+  spawnCli: vi.fn(),
 }));
 
 describe("Antigravity model and effort compatibility", () => {

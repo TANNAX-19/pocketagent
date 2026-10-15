@@ -1,8 +1,6 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { execCli as execFileAsync } from "../../runtime/process.js";
 import type { EngineCapabilities, ModelInfo, EffortInfo } from "../types.js";
 
-const execFileAsync = promisify(execFile);
 
 let cachedCapabilities: EngineCapabilities | null = null;
 let lastFetchedAt = 0;
@@ -32,7 +30,7 @@ export async function discoverAgyCapabilities(
   const models: ModelInfo[] = [];
 
   try {
-    const { stdout } = await execFileAsync(binary, ["models"], { timeout: 8000, windowsHide: true });
+    const { stdout } = await execFileAsync(binary, ["models"], { timeout: 8000 });
     const lines = stdout.split("\n");
     for (const rawLine of lines) {
       const line = rawLine.trim();

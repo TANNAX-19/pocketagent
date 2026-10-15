@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { spawn } from "node:child_process";
+import { spawnCli as spawn } from "../runtime/process.js";
 import { EventEmitter } from "node:events";
 import { PassThrough, Writable } from "node:stream";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -10,9 +10,9 @@ import { AgyEngineAdapter } from "../engines/agy/adapter.js";
 import type { EngineEvent } from "../engines/types.js";
 import type { Session } from "../sessions/types.js";
 
-vi.mock("node:child_process", async importOriginal => ({
-  ...await importOriginal<typeof import("node:child_process")>(),
-  spawn: vi.fn(),
+vi.mock("../runtime/process.js", async importOriginal => ({
+  ...await importOriginal<typeof import("../runtime/process.js")>(),
+  spawnCli: vi.fn(),
 }));
 
 const retry = 'API error (attempt 1): request failed: Post "https://example.invalid/model": EOF';

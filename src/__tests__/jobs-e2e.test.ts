@@ -1,3 +1,4 @@
+import { nodeCommand } from "./helpers/commands.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { chmodSync, existsSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,8 +20,12 @@ import { createInterface } from "node:readline";
 
 const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 const skill = existsSync("CLAUDE.md") ? readFileSync("CLAUDE.md", "utf-8") : "";
-const api = skill.match(/curl -s -X POST "(http:\/\/127\.0\.0\.1:\d+\/api\/jobs)"[^\n]*X-PocketAgent-Session: \$POCKETAGENT_SESSION_ID[^\n]*\n\s*-d '\{"bot_id":"([^"]+)","chat_id":"([^"]+)"/);
+const ids = skill.match(/"bot_id":"([^"]+)","chat_id":"([^"]+)"/);
+const jobUrl = skill.match(/http:\/\/127\.0\.0\.1:\d+\/api\/jobs/);
+const api = ids && jobUrl ? [null, jobUrl[0], ids[1], ids[2]] : null;
 const memory = [];
+const nodeCommand = ${nodeCommand.toString()};
+const sleep = (seconds) => nodeCommand("setTimeout(()=>{}, " + seconds * 1000 + ")");
 
 async function startJob(command, then) {
   if (!api) return { status: 0, body: {} };
@@ -42,17 +47,17 @@ for await (const line of rl) {
   if (own.includes("[Background job #")) {
     text = "CALLBACK remembered=" + memory.some((m) => m.includes("LONG DOWNLOAD")) + " tail=" + own.includes("downloaded-ok") + " then=" + own.includes("Report the size");
   } else if (own.includes("LONG DOWNLOAD")) {
-    const res = await startJob("sleep 0.8; head -c 2048 /dev/zero > data.bin; echo downloaded-ok", "Report the size of data.bin");
+    const res = await startJob(nodeCommand("setTimeout(()=>{require('node:fs').writeFileSync('data.bin', Buffer.alloc(2048)); console.log('downloaded-ok')},800)"), "Report the size of data.bin");
     text = "Started job #" + res.body.job?.number + " (HTTP " + res.status + ")";
   } else if (own.includes("LONG SLEEP")) {
-    const res = await startJob("sleep 30", "Report");
+    const res = await startJob(sleep(30), "Report");
     text = "Started job #" + res.body.job?.number;
   } else if (own.includes("THREE JOBS")) {
     const statuses = [];
-    for (let i = 0; i < 3; i++) statuses.push((await startJob("sleep 30", "x")).status);
+    for (let i = 0; i < 3; i++) statuses.push((await startJob(sleep(30), "x")).status);
     text = "statuses=" + statuses.join(",");
   } else if (own.includes("TRY JOB")) {
-    text = "side-job=" + (await startJob("sleep 30", "x")).status;
+    text = "side-job=" + (await startJob(sleep(30), "x")).status;
   } else if (own.includes("SLOW FOREGROUND")) {
     await new Promise((resolve) => setTimeout(resolve, 1500));
     text = "FOREGROUND DONE";
@@ -94,10 +99,10 @@ describe("Background jobs end to end", () => {
       [
         "gateway:",
         `  port: ${port}`,
-        `  dataDir: "${dataDir}"`,
+        `  dataDir: ${JSON.stringify(dataDir)}`,
         "engines:",
         "  claude:",
-        `    binary: "${fake}"`,
+        `    binary: ${JSON.stringify(fake)}`,
         "jobs:",
         "  pollIntervalMs: 50",
         "bots:",
@@ -187,7 +192,7 @@ describe("Background jobs end to end", () => {
     await bot.handleJobs(message("", "42"), channel);
     const [, listText, buttons] = channel.sendWithButtons.mock.calls.at(-1)!;
     expect(listText).toMatch(/\*#1 Test job\* \[running \d+s\] · Alice/);
-    expect(listText).toContain("`sleep 30`");
+    expect(listText).toContain(job.command);
     expect(buttons[0][0]).toEqual({ text: "Stop #1", data: `job:stop:${job.id}` });
     expect(buttons[1][0]).toEqual({ text: "Log #1", data: `job:log:${job.id}` });
 

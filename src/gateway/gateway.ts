@@ -20,6 +20,7 @@ import { JobStore } from "../jobs/store.js";
 import { jobDuration } from "../jobs/format.js";
 import { isEphemeralSessionId, isJobActive, type BackgroundJob } from "../jobs/types.js";
 import { answerSteerHook, SteerMailbox } from "../steer/steer.js";
+import { isWithinDirectory } from "../runtime/paths.js";
 
 export interface SessionSummary {
   botId: string;
@@ -638,11 +639,11 @@ export class Gateway {
   getWorkspaceFiles(workspacePath: string, subDir = ""): WorkspaceFileInfo[] {
     const workspacesRoot = resolve(join(this.dataDir, "workspaces"));
     const resolvedWs = resolve(workspacePath);
-    if (!resolvedWs.startsWith(workspacesRoot + "/") && resolvedWs !== workspacesRoot) {
+    if (!isWithinDirectory(workspacesRoot, resolvedWs)) {
       throw new Error("Access denied: path is outside workspaces directory");
     }
     const targetDir = resolve(join(resolvedWs, subDir));
-    if (!targetDir.startsWith(resolvedWs)) {
+    if (!isWithinDirectory(resolvedWs, targetDir)) {
       throw new Error("Access denied: path traversal detected");
     }
     if (!existsSync(targetDir)) {
@@ -663,7 +664,7 @@ export class Gateway {
         } catch {}
         return {
           name: e.name,
-          relPath: rel,
+          relPath: rel.split("\\").join("/"),
           isDir: e.isDirectory(),
           size,
           mtime,
@@ -679,11 +680,11 @@ export class Gateway {
   readWorkspaceFile(workspacePath: string, filePath: string): { content: string; size: number; mtime: number } {
     const workspacesRoot = resolve(join(this.dataDir, "workspaces"));
     const resolvedWs = resolve(workspacePath);
-    if (!resolvedWs.startsWith(workspacesRoot + "/")) {
+    if (!isWithinDirectory(workspacesRoot, resolvedWs, false)) {
       throw new Error("Access denied: path is outside workspaces directory");
     }
     const full = resolve(join(resolvedWs, filePath));
-    if (!full.startsWith(resolvedWs + "/")) {
+    if (!isWithinDirectory(resolvedWs, full, false)) {
       throw new Error("Access denied: path traversal detected");
     }
     if (!existsSync(full) || !statSync(full).isFile()) {
@@ -707,7 +708,7 @@ export class Gateway {
   deleteWorkspace(workspacePath: string): boolean {
     const workspacesRoot = resolve(join(this.dataDir, "workspaces"));
     const resolvedWs = resolve(workspacePath);
-    if (!resolvedWs.startsWith(workspacesRoot + "/")) {
+    if (!isWithinDirectory(workspacesRoot, resolvedWs, false)) {
       throw new Error("Access denied: cannot delete outside workspaces directory");
     }
     if (resolvedWs === workspacesRoot) {

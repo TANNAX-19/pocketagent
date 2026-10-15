@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawnCli as spawn, stopCli } from "../../runtime/process.js";
+import type { ChildProcess } from "node:child_process";
 import { mkdirSync, existsSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -298,7 +299,7 @@ export class ClaudeEngineAdapter implements EngineAdapter {
     if (!ep) return;
     this.clearIdleTimer(sessionId);
     if (ep.process && !ep.process.killed) {
-      ep.process.kill("SIGTERM");
+      stopCli(ep.process, "SIGTERM");
     }
     this.processes.delete(sessionId);
   }
@@ -307,7 +308,7 @@ export class ClaudeEngineAdapter implements EngineAdapter {
     for (const [id, ep] of this.processes) {
       this.clearIdleTimer(id);
       if (ep.process && !ep.process.killed) {
-        ep.process.kill("SIGTERM");
+        stopCli(ep.process, "SIGTERM");
       }
     }
     this.processes.clear();
@@ -320,7 +321,7 @@ export class ClaudeEngineAdapter implements EngineAdapter {
     ep.idleTimer = setTimeout(() => {
       this.log.info({ sessionId }, "Claude process idle timeout, terminating");
       if (ep.process && !ep.process.killed) {
-        ep.process.kill("SIGTERM");
+        stopCli(ep.process, "SIGTERM");
       }
       this.processes.delete(sessionId);
     }, this.config.idleTimeoutMs);
@@ -353,7 +354,7 @@ export class ClaudeEngineAdapter implements EngineAdapter {
     if (oldestId) {
       const ep = this.processes.get(oldestId);
       if (ep?.process && !ep.process.killed) {
-        ep.process.kill("SIGTERM");
+        stopCli(ep.process, "SIGTERM");
       }
       this.processes.delete(oldestId);
     }
