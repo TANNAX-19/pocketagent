@@ -39,8 +39,9 @@ describe("JobManager", () => {
       for (const job of m.list({ activeOnly: true })) m.cancel(job.id);
       m.stop();
     }
-    rmSync(dir, { recursive: true, force: true });
-    rmSync(cwd, { recursive: true, force: true });
+    // Windows can retain directory handles briefly after a terminated process exits.
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   function makeManager() {

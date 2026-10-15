@@ -125,7 +125,7 @@ describe("Background jobs end to end", () => {
     const manager = (gateway as any).jobManager;
     for (const job of manager.list({ activeOnly: true })) manager.cancel(job.id);
     await gateway.stop();
-    rmSync(dataDir, { recursive: true, force: true });
+    rmSync(dataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it("hands a long command off, keeps the chat free, and continues the conversation when it exits", async () => {
@@ -142,7 +142,7 @@ describe("Background jobs end to end", () => {
     expect(manager.get(job.id).status).toBe("running");
 
     // The follow-up goes to the same CLI process, replies to the original message and mentions the requester
-    await vi.waitFor(() => expect(sentTexts().some((t) => t.includes("CALLBACK"))).toBe(true), { timeout: 10_000 });
+    await vi.waitFor(() => expect(sentTexts().some((t) => t.includes("CALLBACK"))).toBe(true), { timeout: process.platform === "win32" ? 30_000 : 10_000 });
     const callback = channel.send.mock.calls.find((c) => c[0].text.includes("CALLBACK"))![0];
     expect(callback.replyToMessageId).toBe("11");
     expect(callback.text).toBe("<@u1>\nCALLBACK remembered=true tail=true then=true");
@@ -156,7 +156,7 @@ describe("Background jobs end to end", () => {
     const session = bot.getSessionManager().getActiveSession("g1");
     expect(session.turns.map((t: any) => t.role)).toEqual(["user", "assistant", "user", "assistant", "system", "assistant"]);
     expect(session.turns[4].text).toBe('[Background job #1 "Test job" succeeded]');
-  }, 20_000);
+  }, process.platform === "win32" ? 40_000 : 20_000);
 
   it("caps jobs per message and refuses them from side questions", async () => {
     await bot.handleMessage(message("Start THREE JOBS", "21"), channel);
