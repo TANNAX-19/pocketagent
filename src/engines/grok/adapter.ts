@@ -205,6 +205,7 @@ export class GrokEngineAdapter implements EngineAdapter {
       "Spawning Grok turn process",
     );
     const proc = spawn(spawnCmd.cmd, spawnCmd.args, {
+      windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
       cwd: ep.workspaceDir,
       env: { ...process.env, POCKETAGENT_SESSION_ID: session.sessionId, [STEER_URL_ENV]: steerHookUrl(this.config.apiPort) },

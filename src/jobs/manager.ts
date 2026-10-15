@@ -250,6 +250,7 @@ export class JobManager {
       const child = spawn(SHELL, ["-c", `"${SHELL}" -c "$1"; echo $? > "$2"`, "pocketagent-job", job.command, exitPath], {
         cwd: job.cwd,
         detached: true,
+        windowsHide: true,
         stdio: ["ignore", out, out],
         env: { ...process.env, POCKETAGENT_JOB_ID: job.id },
       });

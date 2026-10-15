@@ -47,7 +47,7 @@ export class SkillRegistry {
 
   constructor(opts?: SkillRegistryOptions) {
     const home = homedir();
-    this.hubDir = opts?.hubDir ?? join(home, ".pocketagent", "skills");
+    this.hubDir = opts?.hubDir ?? join(process.env.POCKETAGENT_HOME ?? join(home, ".pocketagent"), "skills");
     this.agySkillsDir = opts?.agySkillsDir ?? join(home, ".gemini", "config", "skills");
     this.claudeSkillsDir = opts?.claudeSkillsDir ?? join(home, ".claude", "skills");
     this.codexSkillsDir = opts?.codexSkillsDir ?? join(home, ".codex", "skills");

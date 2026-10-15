@@ -376,7 +376,8 @@ export class Gateway {
 
       // Sync skills
       try {
-        const synced = SkillRegistry.getInstance().sync();
+        const synced = process.platform === "win32" && process.env.POCKETAGENT_AUTO_SYNC_SKILLS !== "1"
+          ? [] : SkillRegistry.getInstance().sync();
         if (synced.length > 0) {
           changes.push(`Synchronized ${synced.length} skills across engines`);
         }

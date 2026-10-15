@@ -153,6 +153,7 @@ export class CodexEngineAdapter implements EngineAdapter {
 
     this.log.info({ sessionId: session.sessionId, args: spawnCmd.args }, "Spawning Codex turn process");
     const proc = spawn(spawnCmd.cmd, spawnCmd.args, {
+      windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
       cwd: ep.workspaceDir,
       env: { ...process.env, POCKETAGENT_SESSION_ID: session.sessionId },

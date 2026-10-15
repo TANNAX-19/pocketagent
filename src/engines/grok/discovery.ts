@@ -145,7 +145,7 @@ export async function discoverGrokCapabilities(
 
   // 1. `grok models` reflects login state and config.toml custom models
   try {
-    const { stdout } = await execFileAsync(binary, ["models"], { timeout: 8000 });
+    const { stdout } = await execFileAsync(binary, ["models"], { timeout: 8000, windowsHide: true });
     listed = parseGrokModelsOutput(stdout);
   } catch {}
 

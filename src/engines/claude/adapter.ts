@@ -110,6 +110,7 @@ export class ClaudeEngineAdapter implements EngineAdapter {
 
     this.log.info({ sessionId: session.sessionId, args }, "Spawning Claude process");
     const proc = spawn(this.config.binary, args, {
+      windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
       cwd: sessionDir,
       env: { ...process.env, POCKETAGENT_SESSION_ID: session.sessionId, [STEER_URL_ENV]: steerHookUrl(this.config.apiPort) },
