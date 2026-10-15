@@ -120,11 +120,16 @@ export class DiscordAdapter implements ChannelAdapter {
   private outboundCallback?: (chatId: string, text: string, messageId: string) => void;
   private recentMessagesCache = new Map<string, { id: string; sender: string; text: string }>();
   private forwarderBotIds = new Set<string>();
+  private triggerWordsResolver?: (guildOrChannelId: string) => string[];
   username?: string;
 
   constructor(token: string, log: Logger) {
     this.token = token;
     this.log = log.child({ module: "discord" });
+  }
+
+  setTriggerWordsResolver(resolver: (guildOrChannelId: string) => string[]): void {
+    this.triggerWordsResolver = resolver;
   }
 
   setForwarderBotIds(ids: string[] | Set<string>): void {
@@ -405,13 +410,20 @@ export class DiscordAdapter implements ChannelAdapter {
         text = "请针对被引用的这条消息进行分析和解读。";
       }
 
+      const triggerWords = this.triggerWordsResolver?.(message.channelId || message.guildId || "");
+      const matchedTrigger = triggerWords?.some((word) => {
+        const trimmed = word.trim();
+        return trimmed.length > 0 && text.toLowerCase().includes(trimmed.toLowerCase());
+      }) ?? false;
+
       // In guild channels, respond only if:
       // 1) In Direct Message (DM), OR
       // 2) Bot is explicitly mentioned, OR
       // 3) Message is a reply specifically to the bot's message or a webhook/bot message, OR
-      // 4) Message starts with command slash '/'
+      // 4) Message matches any configured trigger word, OR
+      // 5) Message starts with command slash '/'
       const isDM = !message.guildId;
-      if (!isDM && !isMentioned && !isReplyToBot && !isReplyToWebhook && !text.startsWith("/")) {
+      if (!isDM && !isMentioned && !isReplyToBot && !isReplyToWebhook && !matchedTrigger && !text.startsWith("/")) {
         return;
       }
 

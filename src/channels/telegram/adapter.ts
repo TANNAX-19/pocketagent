@@ -20,6 +20,7 @@ export class TelegramAdapter implements ChannelAdapter {
   private messageStore?: MessageStore;
   private botName: string;
   private outboundCallback?: (chatId: string, text: string, messageId: string) => void;
+  private triggerWordsResolver?: (chatId: string) => string[];
   username?: string;
 
   constructor(token: string, log: Logger) {
@@ -27,6 +28,10 @@ export class TelegramAdapter implements ChannelAdapter {
     this.log = log.child({ module: "telegram" });
     this.bot = createBot(token, this.log);
     this.botName = "PocketAgent";
+  }
+
+  setTriggerWordsResolver(resolver: (chatId: string) => string[]): void {
+    this.triggerWordsResolver = resolver;
   }
 
   setMessageStore(store: MessageStore, botName?: string): void {
@@ -75,7 +80,14 @@ export class TelegramAdapter implements ChannelAdapter {
   }
 
   async start(): Promise<void> {
-    registerHandlers(this.bot, this.messageHandler, this.commandHandlers, this.log, this.callbackHandlers);
+    registerHandlers(
+      this.bot,
+      this.messageHandler,
+      this.commandHandlers,
+      this.log,
+      this.callbackHandlers,
+      this.triggerWordsResolver,
+    );
 
     const commands = [
       { command: "engine", description: "Switch CLI engine (Claude / Codex / Antigravity)" },

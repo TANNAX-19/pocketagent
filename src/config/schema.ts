@@ -12,6 +12,7 @@ const customModelSchema = z.object({
 const telegramGroupSchema = z.object({
   enabled: z.boolean().default(true),
   allowFrom: z.array(z.string()).optional(),
+  triggerWords: z.array(z.string()).optional(),
 });
 
 const telegramChannelSchema = z.object({
@@ -26,6 +27,7 @@ const discordGuildSchema = z.object({
   enabled: z.boolean().default(true),
   allowedChannels: z.array(z.string()).optional(),
   allowFrom: z.array(z.string()).optional(),
+  triggerWords: z.array(z.string()).optional(),
 });
 
 const discordChannelSchema = z.object({
@@ -38,6 +40,7 @@ const discordChannelSchema = z.object({
 
 const gatewaySchema = z.object({
   port: z.number().int().positive().default(18790),
+  proxy: z.string().url().optional(),
   dataDir: z.string().default("~/.pocketagent"),
   logLevel: z.enum(["debug", "info", "warn", "error"]).default("info"),
   logFormat: z.enum(["pretty", "json"]).default("pretty"),
@@ -151,6 +154,7 @@ const botSchema = z.object({
   auth: botAuthSchema.optional(),
   soul: z.string().optional(),
   skills: z.union([z.boolean(), z.array(z.string())]).optional(),
+  triggerWords: z.array(z.string()).optional(),
   // Messages sent while a turn runs: "steer" lets them join it where the engine supports that, "queue" runs them after
   followUp: z.enum(["steer", "queue"]).optional(),
   // What the agent writes before a tool call: "message" posts it right away as its own message, "final" keeps it

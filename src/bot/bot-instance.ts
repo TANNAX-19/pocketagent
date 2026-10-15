@@ -168,15 +168,29 @@ export class BotInstance {
     if (opts.botConfig.token) {
       this.telegram = new TelegramAdapter(opts.botConfig.token, this.log);
       this.telegram.setMessageStore(this.messageStore, this.name);
+      this.telegram.setTriggerWordsResolver((chatId) => this.getTriggerWords(chatId));
     }
 
     if (opts.botConfig.discordToken) {
       this.discord = new DiscordAdapter(opts.botConfig.discordToken, this.log);
       this.discord.setMessageStore(this.messageStore, this.name);
+      this.discord.setTriggerWordsResolver((id) => this.getDiscordTriggerWords(id));
     }
 
     this.allowFrom = this.loadAllowFrom();
     this.runtimeGroups = this.loadRuntimeGroups();
+  }
+
+  getTriggerWords(chatId: string): string[] {
+    const botTriggers = this.config.triggerWords ?? [];
+    const groupTriggers = this.config.groups[chatId]?.triggerWords ?? [];
+    return Array.from(new Set([...botTriggers, ...groupTriggers]));
+  }
+
+  getDiscordTriggerWords(guildOrChannelId: string): string[] {
+    const botTriggers = this.config.triggerWords ?? [];
+    const guildTriggers = this.config.guilds[guildOrChannelId]?.triggerWords ?? [];
+    return Array.from(new Set([...botTriggers, ...guildTriggers]));
   }
 
   setPeerBots(peers: Array<{ name: string; username: string }>): void {
@@ -1749,6 +1763,10 @@ export class BotInstance {
     try {
       const interim = this.config.interimText !== "final";
       const response = await this.collectResponse(session, promptText, tracker, { interim });
+
+      if (response.isError) {
+        throw new Error(response.errorMessage || response.text || `${session.activeEngine} engine failed without an error message`);
+      }
 
       // Check for inline buttons markup: [button: Opt1 | Opt2] or <<Opt1>>
       const { text: fullResponse } = extractButtons(response.text);

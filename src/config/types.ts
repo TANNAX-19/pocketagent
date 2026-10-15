@@ -17,8 +17,9 @@ export interface ResolvedBotConfig {
   groupPolicy: "open" | "pairing" | "allowlist" | "disabled";
   guildPolicy: "open" | "pairing" | "allowlist" | "disabled";
   allowFrom: string[];
-  groups: Record<string, { enabled: boolean; allowFrom?: string[] }>;
-  guilds: Record<string, { enabled: boolean; allowedChannels?: string[]; allowFrom?: string[] }>;
+  triggerWords?: string[];
+  groups: Record<string, { enabled: boolean; allowFrom?: string[]; triggerWords?: string[] }>;
+  guilds: Record<string, { enabled: boolean; allowedChannels?: string[]; allowFrom?: string[]; triggerWords?: string[] }>;
   soul?: string;
   skills?: boolean | string[];
   followUp: "steer" | "queue";
