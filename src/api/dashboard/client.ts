@@ -1399,7 +1399,7 @@ export function dashboardClient() {
     if (!draft) return { html: `<div class="page"><div class="empty">${L("加载中…", "Loading…")}</div></div>` };
     const bots = draft.bots || [];
     const editing = args[0] === "new" ? "new" : args[0] !== undefined && bots[Number(args[0])] ? Number(args[0]) : null;
-    if (editing === "new" && !ui.newBot) ui.newBot = { name: "", channel: "telegram", token: "", dmPolicy: "pairing", groupPolicy: "pairing", allowFrom: [], groups: {} };
+    if (editing === "new" && !ui.newBot) ui.newBot = { name: "", channel: "telegram", token: "", dmPolicy: "pairing", groupPolicy: "pairing", allowFrom: [], triggerWords: [], groups: {} };
     const de = defaultEngine();
     const cards = bots.map((b, i) => {
       const rt = rtByName(b.name);
@@ -1416,7 +1416,7 @@ export function dashboardClient() {
         <dl class="bc-b"><dt>${L("默认执行", "Runs on")}</dt><dd>${b.engine ? eng(b.engine) : eng(de) + `<span class="muted">${L("· 跟随全局", "· global default")}</span>`}${model ? `<span class="muted">· ${esc(model)}</span>` : ""}</dd>
           <dt>${L("访问", "Access")}</dt><dd>${L("私聊 ", "DM ")}${esc(policyName(b.dmPolicy || (draft.auth && draft.auth.defaultPolicy) || "pairing"))} · ${dc ? L("频道 ", "Channels ") : L("群组 ", "Groups ")}${esc(policyName(b.groupPolicy || (draft.auth && draft.auth.defaultPolicy) || "pairing"))}</dd>
           <dt>${L("已授权", "Allowed")}</dt><dd>${L(`${(b.allowFrom || []).length} 位用户 · ${groups} 个${dc ? "频道" : "群组"}`, `${(b.allowFrom || []).length} users · ${groups} ${dc ? "channels" : "groups"}`)}</dd>
-          <dt>${L("人设", "Persona")}</dt><dd>${soul}</dd></dl>
+          <dt>${L("人设", "Persona")}</dt><dd>${soul}</dd>${(b.triggerWords || []).length ? `<dt>${L("触发词", "Triggers")}</dt><dd>${(b.triggerWords || []).map((w) => `<span class="chip" style="display:inline-flex;padding:1px 6px;margin:1px 2px;font-size:11px">${esc(w)}</span>`).join("")}</dd>` : ""}</dl>
         <div class="bc-f"><a class="btn sm ghost" href="#/bots/${i}">${ic("pencil")}${L("编辑", "Edit")}</a><button class="btn sm ghost" data-act="soul" data-i="${i}"${rt ? "" : " disabled"}>${ic("user")}${L("人设", "Persona")}</button><span class="r">${menu(`<button class="btn icon sm ghost">${ic("more")}</button>`, [mi("trash", L("删除这个 Bot…", "Delete this bot…"), `data-act="delBot" data-i="${i}"`, true)], true)}</span></div>
       </div>`;
     });
@@ -1456,6 +1456,8 @@ export function dashboardClient() {
           ${fld(L("推理强度", "Effort"), selPath(pre + "effort", effortOptions(e, b.model)), { path: isNew ? "" : pre + "effort" })}
         </div>
         <div class="hint" style="margin:-6px 0 0">${L("模型和推理强度来自本机检测结果，只列所选模型支持的档位。", "Models and effort levels come from what was detected on this machine.")}</div>
+        <div class="dr-s">${L("群聊唤醒 · 触发词", "GROUP WAKE WORDS · TRIGGERS")}</div>
+        <div class="fld"><div class="lbl">${L("触发词 / 唤醒词", "Trigger words")} <span class="muted">${(b.triggerWords || []).length}</span></div>${tagsHtml(pre + "triggerWords", L("输入触发词后回车，如：田山", "Trigger word, then Enter"))}<div class="hint">${L("群聊中消息包含这些词时会自动触发回复，无需 @ 机器人。", "Messages mentioning these words trigger the bot without an @mention.")}</div></div>
         <div class="dr-s">${L("访问 · 私聊", "ACCESS · DIRECT MESSAGES")}</div>
         ${policyCards(pre + "dmPolicy")}${b.dmPolicy ? "" : `<div class="hint">${L("未单独设置，使用全局默认：", "Not set; using the global default: ")}${esc(policyName(inherit))}</div>`}
         <div class="fld" style="margin-top:12px"><div class="lbl">${L("已授权用户", "Allowed users")} <span class="muted">${(b.allowFrom || []).length}</span></div>${tagsHtml(pre + "allowFrom", L("输入用户 ID 后回车", "User ID, then Enter"))}<div class="hint">${L("批准配对后会自动加进来。", "Approved pairings are added here automatically.")}</div></div>
@@ -2491,7 +2493,11 @@ export function dashboardClient() {
   }
   function addTag(input) {
     const path = input.dataset.tag;
-    const vals = input.value.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
+    const raw = input.value.trim();
+    if (!raw) return;
+    const vals = /[,，\n]/.test(raw)
+      ? raw.split(/[,，\n]+/).map((x) => x.trim()).filter(Boolean)
+      : (path.endsWith("allowFrom") ? raw.split(/\s+/).map((x) => x.trim()).filter(Boolean) : [raw]);
     if (!vals.length) return;
     const arr = (bget(path) || []).slice();
     for (const v of vals) if (!arr.includes(v)) arr.push(v);
