@@ -192,7 +192,8 @@ describe("Background jobs end to end", () => {
     await bot.handleJobs(message("", "42"), channel);
     const [, listText, buttons] = channel.sendWithButtons.mock.calls.at(-1)!;
     expect(listText).toMatch(/\*#1 Test job\* \[running \d+s\] · Alice/);
-    expect(listText).toContain(job.command);
+    // Long executable paths are shortened in chat. Check the command still identifies the job.
+    expect(listText).toContain(job.command.slice(0, 50));
     expect(buttons[0][0]).toEqual({ text: "Stop #1", data: `job:stop:${job.id}` });
     expect(buttons[1][0]).toEqual({ text: "Log #1", data: `job:log:${job.id}` });
 

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
@@ -82,7 +82,8 @@ describe("JobManager", () => {
     expect(manager.get(job!.id)).toMatchObject({ exitCode: 0, callback: "done" });
     const log = manager.readLog(job!.id);
     expect(log).toContain("hello");
-    expect(log).toContain(cwd.split("/").pop());
+    // Runners may expose TEMP using a Windows 8.3 alias; child cwd uses the canonical name.
+    expect(log).toContain(realpathSync(cwd));
     expect(log).toContain(job!.id);
     expect(readFileSync(join(cwd, "out.txt"), "utf-8")).toBe("done\n");
     expect(finished).toHaveLength(1);
