@@ -38,6 +38,8 @@ export interface OutboundMessage {
   plainFallback?: string;
   replyToMessageId?: string;
   attachments?: OutboundAttachment[];
+  /** Progress placeholders are transport state, not conversation history. */
+  transient?: boolean;
 }
 
 export interface InlineButton {
@@ -78,6 +80,7 @@ export interface ChannelAdapter {
     buttons?: string[],
     parseMode?: "MarkdownV2" | "HTML",
     plainFallback?: string,
+    transient?: boolean,
   ): Promise<void>;
   deleteMessage?(chatId: string, messageId: string): Promise<void>;
   /** Sets the bot's reaction on a message, replacing its previous one; null clears it. Never throws. */

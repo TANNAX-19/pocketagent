@@ -5,7 +5,6 @@ import { syncSourceSnapshot } from "../source/snapshot.js";
 import { ApiServer, type ApiSessionBinding, type CronApiResult, type JobApiResult } from "../api/server.js";
 import { DEFAULT_SEND_LIMITS } from "../api/send-limiter.js";
 import { BotInstance } from "../bot/bot-instance.js";
-import { setMessageStore } from "../channels/telegram/handlers.js";
 import { loadConfig, resolveBots, resolveDataDir, saveConfig, syncPairingToConfig } from "../config/loader.js";
 import type { GatewayConfig, ResolvedBotConfig } from "../config/types.js";
 import type { EngineType } from "../config/schema.js";
@@ -131,7 +130,6 @@ export class Gateway {
     this.configPath = configPath ?? join(this.dataDir, "config.yaml");
 
     this.messageStore = new MessageStore(this.dataDir);
-    setMessageStore(this.messageStore);
 
     const workspacesDir = join(this.dataDir, "workspaces");
     const agentsDir = join(this.dataDir, "agents");
@@ -177,7 +175,7 @@ export class Gateway {
         botConfig,
         gatewayConfig: config,
         engineManager: this.engineManager,
-        messageStore: this.messageStore,
+        messageStore: this.messageStore.forBot(botConfig.botId, botConfig.channel ?? "telegram"),
         dataDir: this.dataDir,
         log,
         scheduler: this.scheduler,
@@ -379,7 +377,7 @@ export class Gateway {
             botConfig: bc,
             gatewayConfig: freshConfig,
             engineManager: this.engineManager,
-            messageStore: this.messageStore,
+            messageStore: this.messageStore.forBot(bc.botId, bc.channel ?? "telegram"),
             dataDir: this.dataDir,
             log: this.log,
             scheduler: this.scheduler,

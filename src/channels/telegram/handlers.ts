@@ -3,11 +3,11 @@ import type { InboundMessage, MessageHandler, CommandHandler, Attachment } from 
 import type { Logger } from "pino";
 import type { MessageStore, StoredMessage } from "../../sessions/message-store.js";
 
-const mediaGroupBuffers = new Map<string, {
+type MediaBuffers = Map<string, {
   messages: Array<{ msg: InboundMessage; attachments: Attachment[] }>;
   timer: ReturnType<typeof setTimeout>;
   text: string;
-}>();
+}>;
 
 const MEDIA_GROUP_WAIT_MS = 500;
 
@@ -17,13 +17,7 @@ export function onCallback(prefix: string, handler: (ctx: Context) => Promise<vo
   callbackHandlers.set(prefix, handler);
 }
 
-let messageStore: MessageStore | undefined;
-
-export function setMessageStore(store: MessageStore): void {
-  messageStore = store;
-}
-
-function recordGroupMessage(chatId: string, msg: {
+function recordGroupMessage(messageStore: MessageStore | undefined, chatId: string, msg: {
   messageId: string;
   senderName: string;
   senderId: string;
@@ -49,7 +43,12 @@ export function registerHandlers(
   log: Logger,
   adapterCallbackHandlers?: Map<string, (ctx: Context) => Promise<void>>,
   getTriggerWords?: (chatId: string) => string[],
+  messageStore?: MessageStore,
 ): void {
+  // Each registration belongs to one bot; albums also include the chat identity.
+  const mediaGroupBuffers: MediaBuffers = new Map();
+  const record = (chatId: string, msg: Parameters<typeof recordGroupMessage>[2]) =>
+    recordGroupMessage(messageStore, chatId, msg);
   for (const [cmd, handler] of commandHandlers) {
     bot.command(cmd, (ctx) => {
       const msg = contextToInbound(ctx);
@@ -70,7 +69,7 @@ export function registerHandlers(
     if (!msg) return;
 
     if (msg.isGroup) {
-      recordGroupMessage(msg.chatId, {
+      record(msg.chatId, {
         messageId: msg.messageId,
         senderName: msg.senderName,
         senderId: msg.senderId,
@@ -99,7 +98,7 @@ export function registerHandlers(
     if (msg.isGroup) {
       const photo = ctx.message.photo;
       const largest = photo[photo.length - 1];
-      recordGroupMessage(msg.chatId, {
+      record(msg.chatId, {
         messageId: msg.messageId,
         senderName: msg.senderName,
         senderId: msg.senderId,
@@ -122,7 +121,7 @@ export function registerHandlers(
 
     const mediaGroupId = ctx.message.media_group_id;
     if (mediaGroupId) {
-      bufferMediaGroup(mediaGroupId, msg, [attachment], msg.text, messageHandler, log);
+      bufferMediaGroup(mediaGroupBuffers, mediaGroupId, msg, [attachment], msg.text, messageHandler, log);
     } else {
       msg.attachments = [attachment];
       messageHandler(msg).catch((err: unknown) => {
@@ -186,7 +185,7 @@ export function registerHandlers(
     if (msg.isGroup) {
       const doc = ctx.message.document;
       const fileName = doc?.file_name;
-      recordGroupMessage(msg.chatId, {
+      record(msg.chatId, {
         messageId: msg.messageId,
         senderName: msg.senderName,
         senderId: msg.senderId,
@@ -214,7 +213,7 @@ export function registerHandlers(
 
     const mediaGroupId = ctx.message.media_group_id;
     if (mediaGroupId) {
-      bufferMediaGroup(mediaGroupId, msg, [attachment], msg.text, messageHandler, log);
+      bufferMediaGroup(mediaGroupBuffers, mediaGroupId, msg, [attachment], msg.text, messageHandler, log);
     } else {
       msg.attachments = [attachment];
       messageHandler(msg).catch((err: unknown) => {
@@ -232,7 +231,7 @@ export function registerHandlers(
 
     if (msg.isGroup) {
       const voice = ctx.message.voice;
-      recordGroupMessage(msg.chatId, {
+      record(msg.chatId, {
         messageId: msg.messageId,
         senderName: msg.senderName,
         senderId: msg.senderId,
@@ -273,7 +272,7 @@ export function registerHandlers(
     const fileName = audio.file_name ?? `audio_${audio.file_unique_id}.mp3`;
 
     if (msg.isGroup) {
-      recordGroupMessage(msg.chatId, {
+      record(msg.chatId, {
         messageId: msg.messageId,
         senderName: msg.senderName,
         senderId: msg.senderId,
@@ -300,7 +299,7 @@ export function registerHandlers(
 
     const mediaGroupId = ctx.message.media_group_id;
     if (mediaGroupId) {
-      bufferMediaGroup(mediaGroupId, msg, [attachment], msg.text, messageHandler, log);
+      bufferMediaGroup(mediaGroupBuffers, mediaGroupId, msg, [attachment], msg.text, messageHandler, log);
     } else {
       msg.attachments = [attachment];
       messageHandler(msg).catch((err: unknown) => {
@@ -333,6 +332,7 @@ export function checkGroupMention(
 }
 
 function bufferMediaGroup(
+  mediaGroupBuffers: MediaBuffers,
   mediaGroupId: string,
   msg: InboundMessage,
   attachments: Attachment[],
@@ -340,7 +340,8 @@ function bufferMediaGroup(
   handler: MessageHandler,
   log: Logger,
 ): void {
-  const existing = mediaGroupBuffers.get(mediaGroupId);
+  const key = JSON.stringify([msg.chatId, mediaGroupId]);
+  const existing = mediaGroupBuffers.get(key);
 
   if (existing) {
     existing.messages.push({ msg, attachments });
@@ -352,7 +353,7 @@ function bufferMediaGroup(
     messages: [{ msg, attachments }],
     text,
     timer: setTimeout(() => {
-      mediaGroupBuffers.delete(mediaGroupId);
+      mediaGroupBuffers.delete(key);
       const buf = buffer;
       if (buf.messages.length === 0) return;
 
@@ -371,7 +372,7 @@ function bufferMediaGroup(
     }, MEDIA_GROUP_WAIT_MS),
   };
 
-  mediaGroupBuffers.set(mediaGroupId, buffer);
+  mediaGroupBuffers.set(key, buffer);
 }
 
 export function contextToInbound(ctx: Context): InboundMessage | null {

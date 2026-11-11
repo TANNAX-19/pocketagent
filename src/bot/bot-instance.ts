@@ -37,7 +37,7 @@ import { buildJobCallbackPrompt, describeJobOutcome, formatDuration, jobDuration
 import { isJobActive, type BackgroundJob, type JobCallbackState } from "../jobs/types.js";
 import { buildGroupContext } from "./group-context.js";
 import { decideFollowUp, formatMessageIds, type SteerMailbox } from "../steer/steer.js";
-import { listMemoryFiles, loadMemorySnapshot, type MemoryStoreSnapshot } from "../memory/store.js";
+import { listMemoryFiles, loadMemorySnapshot, redactSecrets, type MemoryStoreSnapshot } from "../memory/store.js";
 import { MemoryWriter } from "../memory/writer.js";
 import { MemoryAutopilot, type SidePurpose } from "../memory/auto.js";
 import type { MemoryConfig } from "../config/schema.js";
@@ -1967,11 +1967,12 @@ export class BotInstance {
       }
       await tracker.finish(reply || "(Task completed)", buttons);
     } catch (err) {
-      tracker.stop();
-      this.log.error({ error: err }, "Error processing turn");
+      await tracker.discard();
+      const failure = redactSecrets(err instanceof Error ? err.message : String(err)).text;
+      this.log.error({ error: failure, chatId: msg.chatId, sessionId: session.sessionId }, "Error processing turn");
       await channel.send({
         chatId: msg.chatId,
-        text: `Error processing turn: ${err instanceof Error ? err.message : String(err)}`,
+        text: `Error processing turn: ${failure}`,
       });
     } finally {
       this.turnSenders.delete(msg.chatId);

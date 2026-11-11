@@ -4,6 +4,8 @@ import type { Logger } from "pino";
 import type { ChannelAdapter, OutboundMessage, MessageHandler, CommandHandler, InlineButton } from "../types.js";
 import type { MessageStore } from "../../sessions/message-store.js";
 import { createBot } from "./bot.js";
+import { PartialDeliveryError } from "../delivery.js";
+import { redactSecrets } from "../../memory/store.js";
 import { registerHandlers } from "./handlers.js";
 import { splitMessage, stripHtml } from "./formatter.js";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -40,16 +42,22 @@ export class TelegramAdapter implements ChannelAdapter {
     if (botName) this.botName = botName;
   }
 
-  private recordOutbound(chatId: string, messageId: string, text: string): void {
+  private recordOutbound(chatId: string, messageId: string, text: string, transient = false): void {
     if (!this.messageStore) return;
     if (!chatId.startsWith("-")) return;
-    this.messageStore.append(chatId, {
-      id: messageId,
-      ts: Math.floor(Date.now() / 1000),
-      sender: this.botName,
-      senderId: this.token.split(":")[0],
-      text,
-    });
+    try {
+      this.messageStore.upsert(chatId, {
+        id: messageId,
+        ts: Math.floor(Date.now() / 1000),
+        sender: this.botName,
+        senderId: this.token.split(":")[0],
+        text,
+        transient,
+      });
+    } catch (err) {
+      // The platform already accepted the message. A disk error must not cause a duplicate send.
+      this.log.warn({ chatId, messageId, error: redactSecrets(String(err)).text.slice(0, 300) }, "Delivered Telegram message could not be archived");
+    }
   }
 
   advanceCursorForSession(sessionId: string, messageId: string): void {
@@ -88,6 +96,7 @@ export class TelegramAdapter implements ChannelAdapter {
       this.log,
       this.callbackHandlers,
       this.triggerWordsResolver,
+      this.messageStore,
     );
 
     const commands = [
@@ -187,13 +196,13 @@ export class TelegramAdapter implements ChannelAdapter {
           const fallbackChunks = splitMessage(fallback);
           sent = await this.bot.api.sendMessage(msg.chatId, (fallbackChunks[0] ?? fallback).slice(0, 4096), replyOpts);
         } else {
-          this.log.error({ error: err, chunk }, "Failed to send message chunk");
+          this.log.error({ error: redactSecrets(String(err)).text.slice(0, 300), chatId: msg.chatId, chunkIndex: i }, "Failed to send message chunk");
           throw err;
         }
       }
       const id = String(sent.message_id);
       ids.push(id);
-      this.recordOutbound(msg.chatId, id, chunk);
+      this.recordOutbound(msg.chatId, id, chunk, msg.transient);
       this.outboundCallback?.(msg.chatId, chunk, id);
     }
 
@@ -263,6 +272,7 @@ export class TelegramAdapter implements ChannelAdapter {
     buttons?: string[],
     parseMode?: "MarkdownV2" | "HTML",
     plainFallback?: string,
+    transient = false,
   ): Promise<void> {
     const chunks = splitMessage(text);
     const firstChunk = chunks[0] || text;
@@ -280,46 +290,49 @@ export class TelegramAdapter implements ChannelAdapter {
         ...parseOpts,
         reply_markup: replyMarkup,
       });
-      this.recordOutbound(chatId, messageId, firstChunk);
+      this.recordOutbound(chatId, messageId, firstChunk, transient);
     } catch (err) {
-      if (err instanceof Error && err.message?.includes("message is not modified")) return;
-      if (parseMode && err instanceof Error && err.message?.includes("can't parse entities")) {
+      if (err instanceof Error && err.message?.includes("message is not modified")) {
+        this.recordOutbound(chatId, messageId, firstChunk, transient);
+      } else if (parseMode && err instanceof Error && err.message?.includes("can't parse entities")) {
         this.log.warn({ parseMode }, "parse failed in editMessage, falling back to plain text");
-        const fallbackText = (plainFallback ?? stripHtml(firstChunk)).slice(0, 4096);
+        const fallbackText = (chunks.length === 1 ? plainFallback ?? stripHtml(firstChunk) : stripHtml(firstChunk)).slice(0, 4096);
         try {
           await this.bot.api.editMessageText(chatId, Number(messageId), fallbackText, {
             reply_markup: replyMarkup,
           });
-          this.recordOutbound(chatId, messageId, fallbackText);
+          this.recordOutbound(chatId, messageId, fallbackText, transient);
         } catch (e2: unknown) {
-          if (e2 instanceof Error && !e2.message?.includes("message is not modified")) throw e2;
+          if (!(e2 instanceof Error && e2.message.includes("message is not modified"))) {
+            this.log.warn({ chatId, messageId, error: redactSecrets(String(e2)).text.slice(0, 300) }, "Telegram edit fallback failed; caller must recover delivery");
+            throw e2;
+          }
+          this.recordOutbound(chatId, messageId, fallbackText, transient);
         }
-      } else if (plainFallback) {
-        try {
-          const fallbackChunks = splitMessage(plainFallback);
-          await this.bot.api.editMessageText(chatId, Number(messageId), fallbackChunks[0] || plainFallback, {
-            reply_markup: replyMarkup,
-          });
-          this.recordOutbound(chatId, messageId, fallbackChunks[0] || plainFallback);
-        } catch {
-          // Ignore
-        }
+      } else {
+        // Network, rate limit and missing-message errors are not formatting errors.
+        // Never report success: ProgressTracker can send a fresh answer to this same chat.
+        this.log.warn({ chatId, messageId, error: redactSecrets(String(err)).text.slice(0, 300) }, "Telegram edit failed; caller must recover delivery");
+        throw err;
       }
     }
 
     if (chunks.length > 1) {
       for (let i = 1; i < chunks.length; i++) {
         try {
-          const sent = await this.bot.api.sendMessage(chatId, chunks[i], parseOpts);
-          this.recordOutbound(chatId, String(sent.message_id), chunks[i]);
-        } catch (err) {
-          if (parseMode && err instanceof Error && err.message?.includes("can't parse entities")) {
+          try {
+            const sent = await this.bot.api.sendMessage(chatId, chunks[i], parseOpts);
+            this.recordOutbound(chatId, String(sent.message_id), chunks[i]);
+          } catch (err) {
+            if (!(parseMode && err instanceof Error && err.message.includes("can't parse entities"))) throw err;
             const fallback = stripHtml(chunks[i]);
             const sent = await this.bot.api.sendMessage(chatId, fallback.slice(0, 4096));
             this.recordOutbound(chatId, String(sent.message_id), fallback);
-          } else {
-            // Ignore
           }
+        } catch (err) {
+          this.log.warn({ chatId, messageId, chunkIndex: i, error: redactSecrets(String(err)).text.slice(0, 300) }, "Telegram tail delivery failed");
+          throw new PartialDeliveryError({ chatId, text: chunks.slice(i).join("\n"), parseMode,
+            plainFallback: stripHtml(chunks.slice(i).join("\n")) }, err);
         }
       }
     }
@@ -338,6 +351,7 @@ export class TelegramAdapter implements ChannelAdapter {
   async deleteMessage(chatId: string, messageId: string): Promise<void> {
     try {
       await this.bot.api.deleteMessage(chatId, Number(messageId));
+      this.messageStore?.remove(chatId, messageId, this.token.split(":")[0]);
     } catch {
       // Ignore delete errors
     }

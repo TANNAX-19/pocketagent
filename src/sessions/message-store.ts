@@ -8,6 +8,8 @@ export interface StoredMessage {
   senderId: string;
   text: string;
   media?: string[];
+  transient?: boolean;
+  deleted?: boolean;
 }
 
 export interface MessageQueryOptions {
@@ -26,9 +28,50 @@ export class MessageStore {
   private cursors = new Map<string, string>();
   private recentIds = new Map<string, Set<string>>();
 
-  constructor(dataDir: string) {
-    this.dir = join(dataDir, "messages");
+  constructor(private dataDir: string, private scope?: { botId: string; channel: string }) {
+    const segment = (s: string) => encodeURIComponent(s).replace(/\./g, "%2E");
+    this.dir = scope
+      ? join(dataDir, "messages", segment(scope.botId), segment(scope.channel))
+      : join(dataDir, "messages");
     mkdirSync(this.dir, { recursive: true });
+  }
+
+  forBot(botId: string, channel: string): MessageStore {
+    if (!botId || !channel) throw new Error("Message store requires bot and channel");
+    return new MessageStore(this.dataDir, { botId, channel });
+  }
+
+  private pathFor(chatId: string): string {
+    if (!chatId) throw new Error("Missing chat identity");
+    return join(this.dir, `${encodeURIComponent(chatId).replace(/\./g, "%2E")}.jsonl`);
+  }
+
+  private records(chatId: string): StoredMessage[] {
+    const filePath = this.pathFor(chatId);
+    if (!existsSync(filePath)) return [];
+    const latest = new Map<string, StoredMessage>();
+    for (const line of readFileSync(filePath, "utf-8").split("\n")) {
+      try {
+        const msg = JSON.parse(line) as StoredMessage;
+        if (typeof msg.id === "string") latest.set(msg.id, msg);
+      } catch { /* An incomplete journal tail is ignored. */ }
+    }
+    return [...latest.values()];
+  }
+
+  /** Edit journal: preserve chronology and refuse to replace another author's message. */
+  upsert(chatId: string, msg: StoredMessage): void {
+    const previous = this.records(chatId).find((m) => m.id === msg.id);
+    if (previous && previous.senderId !== msg.senderId) throw new Error("Message author mismatch");
+    if (previous?.transient && msg.transient) return;
+    const next = previous ? { ...msg, ts: previous.ts } : msg;
+    if (previous && JSON.stringify(previous) === JSON.stringify(next)) return;
+    appendFileSync(this.pathFor(chatId), JSON.stringify(next) + "\n");
+  }
+
+  remove(chatId: string, id: string, senderId: string): void {
+    const previous = this.records(chatId).find((m) => m.id === id);
+    if (previous?.senderId === senderId) this.upsert(chatId, { ...previous, deleted: true });
   }
 
   advanceCursor(sessionId: string, messageId: string): void {
@@ -55,23 +98,14 @@ export class MessageStore {
       if (first !== undefined) seen.delete(first);
     }
 
-    const filePath = join(this.dir, `${chatId}.jsonl`);
+    const filePath = this.pathFor(chatId);
     appendFileSync(filePath, JSON.stringify(msg) + "\n");
     return true;
   }
 
   getRecent(chatId: string, limit = 50): StoredMessage[] {
-    const filePath = join(this.dir, `${chatId}.jsonl`);
-    if (!existsSync(filePath)) return [];
-    const lines = readFileSync(filePath, "utf-8").trim().split("\n").filter(Boolean);
-    const slice = lines.slice(-limit);
-    return slice.map((line) => {
-      try {
-        return JSON.parse(line) as StoredMessage;
-      } catch {
-        return null;
-      }
-    }).filter((m): m is StoredMessage => m !== null);
+    if (limit <= 0) return [];
+    return this.records(chatId).filter((m) => !m.transient && !m.deleted).slice(-limit);
   }
 
   getSinceCursor(chatId: string, sessionId: string, limit = 20): StoredMessage[] {

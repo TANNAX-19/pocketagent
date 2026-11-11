@@ -197,7 +197,7 @@ export class ApiServer {
       } else if (url.pathname === "/api/soul") {
         await this.handleSoul(req, res, url);
       } else if (req.method === "GET" && url.pathname === "/api/chat-history") {
-        await this.handleChatHistory(res, url);
+        await this.handleChatHistory(req, res, url);
       } else if (req.method === "POST" && url.pathname === "/api/download-file") {
         await this.handleDownloadFile(req, res, url);
       } else if (req.method === "POST" && url.pathname === "/api/reload-config") {
@@ -882,30 +882,32 @@ export class ApiServer {
     res.end(JSON.stringify({ error: "Method not allowed" }));
   }
 
-  private async handleChatHistory(res: ServerResponse, url: URL): Promise<void> {
-    const chatId = url.searchParams.get("chat_id");
-    const botId = url.searchParams.get("bot_id");
-    if (!chatId) {
+  private async handleChatHistory(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+    const target = this.bindTarget(req, new Map(url.searchParams), "chat-history");
+    if (!target.ok || (req.headers["x-pocketagent-session"] && !target.session)) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "History must belong to the caller's session" }));
+      return;
+    }
+    const { chatId, botId } = target;
+    if (!chatId || !botId) {
       res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Missing chat_id" }));
+      res.end(JSON.stringify({ error: "Missing bot_id or chat_id" }));
       return;
     }
 
-    const limit = Number(url.searchParams.get("limit") ?? "50");
+    const requestedLimit = Number(url.searchParams.get("limit") ?? "50");
+    const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(200, Math.floor(requestedLimit))) : 50;
     const sender = url.searchParams.get("sender") ?? undefined;
     const search = url.searchParams.get("search") ?? undefined;
 
     // Prioritize direct cloud history fetch (e.g. Discord) without touching local database
-    let channel: any = botId ? (this.config.getBotChannel?.(botId) ?? this.config.getBotTelegram(botId)) : undefined;
-    if (!channel && this.config.getBotsInfo) {
-      const bots = this.config.getBotsInfo();
-      for (const b of bots) {
-        const ch: any = this.config.getBotChannel?.(b.botId);
-        if (ch && typeof ch.fetchHistory === "function") {
-          channel = ch;
-          break;
-        }
-      }
+    const channel: ChannelAdapter | undefined = this.config.getBotChannel?.(botId, target.session?.channelType) ?? this.config.getBotTelegram(botId);
+    const botInfo = this.config.getBotsInfo?.().find((b) => b.botId === botId);
+    if (!channel && !botInfo) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Bot not found" }));
+      return;
     }
 
     if (channel && typeof channel.fetchHistory === "function") {
@@ -931,7 +933,7 @@ export class ApiServer {
       return;
     }
 
-    const messages = this.config.messageStore.query({
+    const messages = this.config.messageStore.forBot(botId, channel?.type ?? botInfo!.channel).query({
       chatId,
       limit,
       sender,

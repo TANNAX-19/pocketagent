@@ -1,6 +1,7 @@
 import type { ChannelAdapter } from "../channels/types.js";
 import { markdownToTelegramHtml, stripHtml } from "../channels/telegram/formatter.js";
 import { appendText } from "../engines/text-blocks.js";
+import { PartialDeliveryError } from "../channels/delivery.js";
 
 const TICK_INTERVAL = 3000;
 const FLUSH_MIN = 3000;
@@ -227,6 +228,7 @@ export class ProgressTracker {
     this.done = true;
     this.stop();
     await this.pendingFlush;
+    await this.flushInFlight;
     if (this.messageId) {
       const progressId = this.messageId;
       this.messageId = null;
@@ -243,6 +245,7 @@ export class ProgressTracker {
     this.done = true;
     this.stop();
     await this.pendingFlush;
+    await this.flushInFlight;
 
     const isTelegram = this.channel.type === "telegram";
     const { mention } = opts;
@@ -276,7 +279,12 @@ export class ProgressTracker {
           plainFallback,
         );
         return;
-      } catch {
+      } catch (err) {
+        if (err instanceof PartialDeliveryError) {
+          // A successful prefix must not be repeated just because a later chunk failed.
+          await this.channel.send({ ...err.remaining, replyToMessageId: this.replyToMessageId });
+          return;
+        }
         // Fall back to sending new message if edit fails
       }
     }
@@ -287,6 +295,11 @@ export class ProgressTracker {
       parseMode,
       plainFallback,
     });
+    // Remove the orphan spinner only after the replacement answer was accepted.
+    if (this.messageId) {
+      await this.channel.deleteMessage?.(this.chatId, this.messageId).catch(() => {});
+      this.messageId = null;
+    }
   }
 
   private async flush(): Promise<void> {
@@ -314,9 +327,10 @@ export class ProgressTracker {
           chatId: this.chatId,
           text,
           replyToMessageId: this.replyToMessageId,
+          transient: true,
         });
       } else {
-        await this.channel.editMessage(this.chatId, this.messageId, text);
+        await this.channel.editMessage(this.chatId, this.messageId, text, undefined, undefined, undefined, true);
       }
       this.lastFlush = Date.now();
     } catch {
