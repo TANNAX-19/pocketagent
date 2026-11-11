@@ -157,6 +157,16 @@ describe("archive namespaces", () => {
     expect(existsSync(join(dir, "escape.jsonl"))).toBe(false);
     expect(store.getRecent("../../escape")[0].text).toBe("original");
   });
+  it("keeps case-sensitive platform IDs distinct on Windows and avoids reserved device names", () => {
+    const root = new MessageStore(dir);
+    const a = root.forBot("Bot", "telegram"), b = root.forBot("bot", "telegram");
+    a.append("User", message("1", "upper")); a.append("user", message("1", "lower"));
+    b.append("User", message("1", "other bot")); a.append("CON", message("1", "device name"));
+    expect(a.getRecent("User")[0].text).toBe("upper");
+    expect(a.getRecent("user")[0].text).toBe("lower");
+    expect(b.getRecent("User")[0].text).toBe("other bot");
+    expect(a.getRecent("CON")[0].text).toBe("device name");
+  });
 });
 
 describe("album isolation", () => {

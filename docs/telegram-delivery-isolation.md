@@ -6,7 +6,7 @@ This change propagates failed edits, retries malformed formatting as plain text,
 
 Accepted message edits are append-only journal revisions. Readers collapse revisions by ID while preserving the original message order. Transient progress messages and deletion tombstones are excluded from the history supplied to the model. Revisions cannot replace a different author's record.
 
-New archives live at `messages/<botId>/<channel>/<encoded-chatId>.jsonl`. Telegram handlers receive their bot's store directly instead of using a module-global store. Album buffers are local to each handler registration and keyed by chat plus album ID.
+New archives live at `messages/<encoded-botId>/<encoded-channel>/<encoded-chatId>.jsonl`. Each component uses a prefixed UTF-8 hex encoding so distinct case-sensitive platform identities cannot collide on Windows and device names/path separators are harmless. Telegram handlers receive their bot's store directly instead of using a module-global store. Album buffers are local to each handler registration and keyed by chat plus album ID.
 
 The history API uses the caller's bot/chat binding when a session header is present, rejects unknown session headers and target mismatches, requires explicit bot and chat for trusted dashboard callers, and never searches an unrelated bot's cloud history. History queries are bounded to 200 messages. Diagnostic edit-failure logs redact known credential formats and do not include message bodies or raw request objects.
 

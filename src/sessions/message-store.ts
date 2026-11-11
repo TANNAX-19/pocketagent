@@ -22,6 +22,8 @@ export interface MessageQueryOptions {
 }
 
 const DEDUP_WINDOW = 500;
+// Hex is injective even on Windows' case-insensitive filesystem, and avoids device names.
+const storageSegment = (value: string) => `id-${Buffer.from(value, "utf-8").toString("hex")}`;
 
 export class MessageStore {
   private dir: string;
@@ -29,9 +31,8 @@ export class MessageStore {
   private recentIds = new Map<string, Set<string>>();
 
   constructor(private dataDir: string, private scope?: { botId: string; channel: string }) {
-    const segment = (s: string) => encodeURIComponent(s).replace(/\./g, "%2E");
     this.dir = scope
-      ? join(dataDir, "messages", segment(scope.botId), segment(scope.channel))
+      ? join(dataDir, "messages", storageSegment(scope.botId), storageSegment(scope.channel))
       : join(dataDir, "messages");
     mkdirSync(this.dir, { recursive: true });
   }
@@ -43,7 +44,8 @@ export class MessageStore {
 
   private pathFor(chatId: string): string {
     if (!chatId) throw new Error("Missing chat identity");
-    return join(this.dir, `${encodeURIComponent(chatId).replace(/\./g, "%2E")}.jsonl`);
+    const key = this.scope ? storageSegment(chatId) : encodeURIComponent(chatId).replace(/\./g, "%2E");
+    return join(this.dir, `${key}.jsonl`);
   }
 
   private records(chatId: string): StoredMessage[] {
